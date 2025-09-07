@@ -1,13 +1,14 @@
+
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder, MinMaxScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, roc_curve, auc
 from sklearn.decomposition import PCA
 from sklearn.svm import SVC
 import matplotlib.pyplot as plt
 import qutip as qt
-from qutip_qip.operations import ry, cnot
+from qutip_qip.operations import ry, rz, cnot
 
 # Define NSL-KDD columns (41 features + label + difficulty_level = 43 columns)
 columns = [
@@ -112,7 +113,7 @@ X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
 # Reduce dimensionality
-n_components = 4
+n_components = 4  # Reduced to speed up computation
 pca = PCA(n_components=n_components)
 X_train_reduced = pca.fit_transform(X_train_scaled)
 X_test_reduced = pca.transform(X_test_scaled)
@@ -123,8 +124,8 @@ X_train_reduced = minmax.fit_transform(X_train_reduced)
 X_test_reduced = minmax.transform(X_test_reduced)
 
 # Subsample with stratification
-train_size = 1000
-test_size = 200
+train_size = 300  # Reduced to speed up kernel computation
+test_size = 100
 X_train_reduced, _, y_train, _ = train_test_split(X_train_reduced, y_train, train_size=train_size, random_state=42, stratify=y_train)
 X_test_reduced, _, y_test, _ = train_test_split(X_test_reduced, y_test, train_size=test_size, random_state=42, stratify=y_test)
 
@@ -137,9 +138,13 @@ if len(np.unique(y_train)) < 2:
     print("Error: y_train contains only one class. Try increasing train_size or check label binarization.")
     exit(1)
 
-# Train classical SVM with linear kernel for comparison
-svm_classical = SVC(kernel='linear', random_state=42)
-svm_classical.fit(X_train_reduced, y_train)
+# Train classical SVM with RBF kernel for fair comparison
+svm_classical = SVC(kernel='rbf', random_state=42)
+param_grid_classical = {'C': [0.1, 1, 10, 100], 'gamma': ['scale', 'auto', 0.1, 1]}
+grid_classical = GridSearchCV(svm_classical, param_grid_classical, cv=5)
+grid_classical.fit(X_train_reduced, y_train)
+svm_classical = grid_classical.best_estimator_
+print(f"Best Classical SVM parameters: {grid_classical.best_params_}")
 
 # Evaluate classical
 y_pred_classical = svm_classical.predict(X_test_reduced)
@@ -157,15 +162,17 @@ print(f"Classical SVM AUC: {roc_auc_classical:.2f}")
 # QSVM part
 def create_state(x, n_qubits):
     state = qt.tensor([qt.basis(2, 0) for _ in range(n_qubits)])
-    # Apply RY rotations
-    for i in range(n_qubits):
-        Ry = ry(x[i])  # Updated to use imported ry
-        op = qt.tensor([Ry if j == i else qt.qeye(2) for j in range(n_qubits)])
-        state = op * state
-    # Add entanglement with CNOT ring
-    for i in range(n_qubits):
-        cn = cnot(n_qubits, i, (i + 1) % n_qubits)  # Updated to use imported cnot
-        state = cn * state
+    # Two layers with data re-uploading for expressiveness
+    for _ in range(2):  # Reduced depth
+        for i in range(n_qubits):
+            Ry = ry(x[i] * (1 + _ * 0.5))  # Data re-uploading
+            Rz = rz(x[i] * (1 + _ * 0.5))
+            op_ry = qt.tensor([Ry if j == i else qt.qeye(2) for j in range(n_qubits)])
+            op_rz = qt.tensor([Rz if j == i else qt.qeye(2) for j in range(n_qubits)])
+            state = op_ry * op_rz * state
+        for i in range(n_qubits):  # Ring CNOTs for speed
+            cn = cnot(n_qubits, i, (i + 1) % n_qubits)
+            state = cn * state
     return state
 
 def compute_kernel(X1, X2, n_qubits):
@@ -175,12 +182,15 @@ def compute_kernel(X1, X2, n_qubits):
     return np.real(np.abs(overlaps) ** 2)
 
 n_qubits = n_components
-train_kernel = compute_kernel(X_train_reduced, X_train_reduced, n_qubits)
-test_kernel = compute_kernel(X_test_reduced, X_train_reduced, n_qubits)
+train_kernel = compute_kernel(X1=X_train_reduced, X2=X_train_reduced, n_qubits=n_qubits)
+test_kernel = compute_kernel(X1=X_test_reduced, X2=X_train_reduced, n_qubits=n_qubits)
 
-# Train QSVM
-svm_quantum = SVC(kernel='precomputed', random_state=42, C=1.0)
-svm_quantum.fit(train_kernel, y_train)
+# Train QSVM with hyperparameter tuning
+param_grid = {'C': [1, 10, 100, 500]}  # Narrowed range
+grid = GridSearchCV(SVC(kernel='precomputed'), param_grid, cv=5)
+grid.fit(train_kernel, y_train)
+svm_quantum = grid.best_estimator_
+print(f"Best QSVM C parameter: {grid.best_params_['C']}")
 
 # Evaluate QSVM
 y_pred_quantum = svm_quantum.predict(test_kernel)
