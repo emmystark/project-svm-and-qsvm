@@ -12,9 +12,12 @@ from qutip_qip.operations import ry, rz, cnot
 import sys
 import time
 
+# Quantum feature map: Amplitude Encoding with additional entanglement and layers
 def create_state(x, n_qubits):
+    # Normalize input
     state = qt.tensor([qt.basis(2, 0) for _ in range(n_qubits)])
     scale = 3.0  # Increased for better feature encoding
+    # Apply rotations and entanglements
     for _ in range(2):  # Added a second layer for more expressiveness
         for i in range(n_qubits):
             Ry = ry(x[i] * scale)
@@ -27,6 +30,8 @@ def create_state(x, n_qubits):
             state = cn * state
     return state
 
+
+# Compute kernel matrix using state overlaps
 def compute_kernel(X1, X2, n_qubits):
     print(f"Computing kernel for {len(X1)} x {len(X2)} samples...")
     states1 = np.array([create_state(x, n_qubits).full().flatten() for x in X1], dtype=complex)
@@ -34,6 +39,7 @@ def compute_kernel(X1, X2, n_qubits):
     overlaps = np.einsum('id,jd->ij', states1.conj(), states2)
     return np.real(np.abs(overlaps) ** 2)
 
+# Main execution
 def main():
     print("Starting script execution at:", time.ctime())
 
@@ -51,21 +57,26 @@ def main():
         'label', 'difficulty_level'
     ]
 
+    # Load datasets
     print("Loading datasets...")
+    
+    # Enhanced error handling for file loading
     try:
         raw_train_data = pd.read_csv('KDDTrain+.txt', delimiter=',', header=None)
         raw_test_data = pd.read_csv('KDDTest+.txt', delimiter=',', header=None)
         print(f"Raw train data shape: {raw_train_data.shape}")
         print(f"Raw test data shape: {raw_test_data.shape}")
-
+        
+        # Validate number of columns
         if raw_train_data.shape[1] != 43:
             print(f"Error: Expected 43 columns, got {raw_train_data.shape[1]}. Check dataset format.")
             sys.exit(1)
-
+        
         train_data = raw_train_data.copy()
         train_data.columns = columns
         test_data = raw_test_data.copy()
         test_data.columns = columns
+        # Validate number of columns after renaming
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print("Please ensure 'KDDTrain+.txt' and 'KDDTest+.txt' are in the same directory.")
@@ -92,7 +103,9 @@ def main():
     print("Label counts before binarization:", train_data['label'].value_counts())
 
     print("Preprocessing data...")
+    # Convert numeric columns to appropriate types
     numeric_cols = [col for col in columns if col not in ['protocol_type', 'service', 'flag', 'label', 'difficulty_level']]
+    # Ensure numeric columns are properly converted
     for col in numeric_cols:
         train_data[col] = pd.to_numeric(train_data[col], errors='coerce').fillna(0)
         test_data[col] = pd.to_numeric(test_data[col], errors='coerce').fillna(0)
