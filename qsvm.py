@@ -412,8 +412,8 @@ def main():
     
     ax7.set_xlim([0.0, 1.0])
     ax7.set_ylim([0.0, 1.05])
-    ax7.set_xlabel('False Positive Rate (FPR)', fontsize=14, fontweight='bold')
-    ax7.set_ylabel('True Positive Rate (TPR)', fontsize=14, fontweight='bold')
+    ax7.set_xlabel('False Positive Rate (FPR)', fontsize=14, fontweight='bold') 
+    ax7.set_ylabel('True Positive Rate (TPR)', fontsize=14, fontweight='bold' )
     ax7.set_title('ROC Curve: Maximal Quantum Advantage (High TPR for Low FPR)', 
                   fontsize=17, fontweight='bold', color='#2c3e50', pad=15)
     ax7.legend(loc="lower right", fontsize=12, framealpha=0.95, fancybox=True, shadow=True)
