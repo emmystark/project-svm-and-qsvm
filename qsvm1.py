@@ -217,7 +217,7 @@ def main():
         X_test_reduced = minmax.transform(X_test_reduced)
 
         # Balanced sampling for efficiency
-        train_size = 10000 
+        train_size = 5000 
         test_size = 100
         
         X_train_reduced, _, y_train, _ = train_test_split(
