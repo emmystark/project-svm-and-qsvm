@@ -15,9 +15,10 @@ from functools import lru_cache, partial
 import matplotlib.style as mplstyle
 from sklearn.metrics import ConfusionMatrixDisplay
 from qsvm_lime_analysi import lime_tabular
+from lime.lime_tabular import LimeTabularExplainer
 
 # Apply a professional, modern plot style
-mplstyle.use('ggplot') 
+mplstyle.use('ggplot')
 
 # ====================================================================
 # QUANTUM GATES AND FEATURE MAP (Optimized for Efficiency)
@@ -46,17 +47,17 @@ def cnot_cached(N, control, target):
     P1 = qt.basis(2, 1) * qt.basis(2, 1).dag()
     I = qt.qeye(2)
     X = qt.sigmax()
-    
+
     ops0 = [qt.qeye(2)] * N
     ops0[control] = P0
     ops0[target] = I
     term0 = qt.tensor(ops0)
-    
+
     ops1 = [qt.qeye(2)] * N
     ops1[control] = P1
     ops1[target] = X
     term1 = qt.tensor(ops1)
-    
+
     return term0 + term1
 
 def create_advanced_quantum_state(x, n_qubits):
@@ -64,46 +65,46 @@ def create_advanced_quantum_state(x, n_qubits):
     # Initialize with Hadamard superposition
     H = hadamard()
     state = qt.tensor([H * qt.basis(2, 0) for _ in range(n_qubits)])
-    
+
     # Reduced to 3 layers for efficiency while maintaining expressivity
     encoding_layers = [
         {'scale': 2.8, 'rx_w': 1.0, 'ry_w': 0.9, 'rz_w': 1.2},
         {'scale': 3.5, 'rx_w': 1.3, 'ry_w': 0.7, 'rz_w': 0.9},
         {'scale': 4.2, 'rx_w': 0.8, 'ry_w': 1.1, 'rz_w': 1.4},
     ]
-    
+
     for layer_idx, layer_params in enumerate(encoding_layers):
         scale = layer_params['scale']
-        
+
         # Apply parameterized rotations with varying weights and non-linear encoding
         for i in range(n_qubits):
             angle_base = x[i] * scale
-            
+
             # Non-linear feature transformation
             angle_rx = np.tanh(angle_base) * layer_params['rx_w'] * np.pi
             angle_ry = np.sin(angle_base) * layer_params['ry_w'] * np.pi
             angle_rz = np.cos(angle_base) * layer_params['rz_w'] * np.pi
-            
+
             Rx = rx(angle_rx)
             Ry = ry(angle_ry)
             Rz = rz(angle_rz)
-            
+
             op_rx = qt.tensor([Rx if j == i else qt.qeye(2) for j in range(n_qubits)])
             op_ry = qt.tensor([Ry if j == i else qt.qeye(2) for j in range(n_qubits)])
             op_rz = qt.tensor([Rz if j == i else qt.qeye(2) for j in range(n_qubits)])
-            
+
             state = op_rz * op_ry * op_rx * state
-        
+
         # Simplified entanglement: Nearest neighbor only
         for i in range(n_qubits - 1):
             cn = cnot_cached(n_qubits, i, i + 1)
             state = cn * state
-        
+
         # Circular connection in last layer
         if layer_idx == len(encoding_layers) - 1:
             cn = cnot_cached(n_qubits, n_qubits - 1, 0)
             state = cn * state
-    
+
     return state.unit()  # Ensure normalization
 
 def parallel_create_state(args):
@@ -121,9 +122,9 @@ def compute_row(states1, states2, i):
 def compute_quantum_kernel_advanced(X1, X2, n_qubits, batch_size=50):
     """Optimized quantum kernel using QuTiP overlap for direct computation"""
     print(f"Computing advanced quantum kernel for {len(X1)} x {len(X2)} samples...")
-    
+
     n_cores = max(1, mp.cpu_count() - 1)
-    
+
     def create_states_batch(X):
         states = []
         for i in range(0, len(X), batch_size):
@@ -133,25 +134,25 @@ def compute_quantum_kernel_advanced(X1, X2, n_qubits, batch_size=50):
             states.extend(batch_states)
             print(f"  Quantum states: {min(i + batch_size, len(X))}/{len(X)}")
         return states
-    
+
     states1 = create_states_batch(X1)
     states2 = create_states_batch(X2)
-    
+
     print("  Computing quantum fidelity matrix...")
     kernel = np.zeros((len(X1), len(X2)))
-    
+
     # Parallelize overlap computation by rows
     compute_row_partial = partial(compute_row, states1, states2)
     with mp.Pool(processes=n_cores) as pool:
         kernel = np.array(pool.map(compute_row_partial, range(len(X1))))
-    
+
     # Standard fidelity kernel without extra transformations for better generalization
     kernel /= np.max(kernel) + 1e-10  # Normalize
-    
+
     # Stability term for Gram matrix
     if kernel.shape[0] == kernel.shape[1]:
         kernel += np.eye(kernel.shape[0]) * 1e-4
-    
+
     return kernel
 
 # ====================================================================
@@ -164,9 +165,10 @@ def main():
     print("=" * 70)
     qsvm_start = time.time()
 
-    print("📁 Loading KDDCup99 dataset from sklearn...")
+    print("📁 Loading KDDCup99 dataset from sklearn (similar to NSL-KDD)...")
     try:
         # Use sklearn's fetch_kddcup99 for reproducibility without external files
+        # Note: NSL-KDD is an improved version; structure is similar for analysis
         data = fetch_kddcup99(subset=None, shuffle=True, random_state=42, download_if_missing=True)
         df = pd.DataFrame(data.data, columns=[
             'duration', 'protocol_type', 'service', 'flag', 'src_bytes', 'dst_bytes', 'land',
@@ -180,13 +182,59 @@ def main():
             'dst_host_srv_serror_rate', 'dst_host_rerror_rate', 'dst_host_srv_rerror_rate'
         ])
         df['label'] = data.target
-        
+
         # Print data types of each column
         print("Data types of each column in the dataset:")
         print(df.dtypes)
         print("\n")
-        
-        # Preprocessing
+
+        # NEW: Analysis of Intrusion Types, Number of Attacks, and Time of Attack (Duration)
+        print("=" * 70)
+        print("🔍 DATASET ANALYSIS: INTRUSION TYPES, ATTACK COUNTS, AND DURATION STATS")
+        print("=" * 70)
+
+        # Types of intrusions (top 10 most frequent labels)
+        print("Types of Intrusions (Top 10):")
+        intrusion_types = df['label'].value_counts().head(10)
+        print(intrusion_types)
+        print("\n")
+
+        # Number of attacks
+        num_normal = (df['label'] == b'normal.').sum()
+        num_attacks = len(df) - num_normal
+        print(f"Total Records: {len(df)}")
+        print(f"Number of Normal Connections: {num_normal}")
+        print(f"Number of Attacks: {num_attacks}")
+        print(f"Attack Percentage: {(num_attacks / len(df)) * 100:.2f}%")
+        print("\n")
+
+        # Time of attack (duration stats overall and by category)
+        print("Duration Statistics (Time of Connections/Attacks):")
+        print("Overall:")
+        print(df['duration'].describe())
+        print("\nBy Category (Normal vs Attack):")
+        duration_normal = df[df['label'] == b'normal.']['duration'].describe()
+        duration_attack = df[df['label'] != b'normal.']['duration'].describe()
+        print("Normal Connections:")
+        print(duration_normal)
+        print("\nAttack Connections:")
+        print(duration_attack)
+
+        # Optional: Plot distribution of top intrusion types
+        plt.figure(figsize=(12, 6))
+        intrusion_types.plot(kind='bar')
+        plt.title('Top 10 Intrusion Types in Dataset')
+        plt.xlabel('Intrusion Type')
+        plt.ylabel('Count')
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        plt.show()
+
+        print("=" * 70)
+        print("📊 Note: For full NSL-KDD, download from official source; KDDCup99 is used here for compatibility.")
+        print("=" * 70 + "\n")
+
+        # Preprocessing (continue as before)
         numeric_cols = [col for col in df.columns if col not in ['protocol_type', 'service', 'flag', 'label']]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -196,6 +244,7 @@ def main():
             le = LabelEncoder()
             df[col] = le.fit_transform(df[col].astype(str))
 
+        # Binarize for binary classification (normal vs anomaly)
         df['label'] = (df['label'] != b'normal.').astype(int)
 
         X = df.drop('label', axis=1).values
@@ -218,9 +267,9 @@ def main():
         X_test_reduced = minmax.transform(X_test_reduced)
 
         # Balanced sampling for efficiency
-        train_size = 5000 
+        train_size = 5000
         test_size = 100
-        
+
         X_train_reduced, _, y_train, _ = train_test_split(
             X_train_reduced, y_train, train_size=train_size, random_state=42, stratify=y_train
         )
@@ -228,11 +277,11 @@ def main():
             X_test_reduced, y_test, train_size=test_size, random_state=42, stratify=y_test
         )
         print(f"✅ Selected {train_size} training and {test_size} test samples.\n")
-        
+
     except Exception as e:
         print(f"❌ Dataset loading failed: {e}. Generating dummy data.")
         n_components = 4
-        train_size = 300 
+        train_size = 300
         test_size = 100
         X_train_reduced = np.random.rand(train_size, n_components) * np.pi/2
         y_train = np.random.randint(0, 2, train_size)
@@ -245,7 +294,7 @@ def main():
     print("=" * 70)
     print("🔵 CLASSICAL SVM (LINEAR BASELINE)")
     print("=" * 70)
-    svm_classical = SVC(kernel='linear', C=0.01, random_state=42) 
+    svm_classical = SVC(kernel='linear', C=0.01, random_state=42)
     svm_classical.fit(X_train_reduced, y_train)
 
     y_pred_classical = svm_classical.predict(X_test_reduced)
@@ -253,11 +302,11 @@ def main():
     precision_classical = precision_score(y_test, y_pred_classical, zero_division=0)
     recall_classical = recall_score(y_test, y_pred_classical, zero_division=0)
     f1_classical = f1_score(y_test, y_pred_classical, zero_division=0)
-    
+
     y_score_classical = svm_classical.decision_function(X_test_reduced)
     fpr_classical, tpr_classical, _ = roc_curve(y_test, y_score_classical)
     roc_auc_classical = auc(fpr_classical, tpr_classical)
-    
+
     print(f"📊 Classical Results:")
     print(f"   Accuracy:  {accuracy_classical:.4f}")
     print(f"   Precision: {precision_classical:.4f}")
@@ -271,7 +320,7 @@ def main():
     print("🔴 QUANTUM SVM (OPTIMIZED KERNEL COMPUTATION)")
     print("=" * 70)
     n_qubits = n_components
-    
+
     try:
         kernel_start = time.time()
         train_kernel = compute_quantum_kernel_advanced(X_train_reduced, X_train_reduced, n_qubits)
@@ -281,16 +330,14 @@ def main():
     except Exception as e:
         print(f"\n❌ QSVM computation failed: {e}")
         sys.exit(1)
-        
+
     print("\n🔧 Optimizing hyperparameters (Expanded grid)...")
-    param_grid = {'C': [1, 10, 100, 500, 1000, 5000]}  # Expanded for better optimization
-    grid = GridSearchCV(SVC(kernel='precomputed'), param_grid, cv=5, scoring='f1')  # Increased CV
+    # Add probability=True for LIME compatibility
+    param_grid = {'C': [1, 10, 100, 500, 1000, 5000, 10000]}  # Expanded for better optimization
+    grid = GridSearchCV(SVC(kernel='precomputed', probability=True), param_grid, cv=5, scoring='f1')  # Increased CV
     grid.fit(train_kernel, y_train)
-    
-    # Refit the best model with probability=True for LIME
-    svm_quantum = SVC(kernel='precomputed', C=grid.best_params_['C'], probability=True)
-    svm_quantum.fit(train_kernel, y_train)
-    
+    svm_quantum = grid.best_estimator_
+
     qsvm_time = time.time() - qsvm_start
     print(f"✅ Optimal C: {grid.best_params_['C']}")
 
@@ -299,7 +346,7 @@ def main():
     precision_quantum = precision_score(y_test, y_pred_quantum, zero_division=0)
     recall_quantum = recall_score(y_test, y_pred_quantum, zero_division=0)
     f1_quantum = f1_score(y_test, y_pred_quantum, zero_division=0)
-    
+
     y_score_quantum = svm_quantum.decision_function(test_kernel)
     fpr_quantum, tpr_quantum, _ = roc_curve(y_test, y_score_quantum)
     roc_auc_quantum = auc(fpr_quantum, tpr_quantum)
@@ -311,7 +358,7 @@ def main():
     print(f"   F1-Score:  {f1_quantum:.4f} (Δ {(f1_quantum-f1_classical):+.4f})")
     print(f"   AUC:       {roc_auc_quantum:.4f} (Δ {(roc_auc_quantum-roc_auc_classical):+.4f})")
     print(f"\n⏱️  Total run time: {qsvm_time:.1f}s")
-    
+
     # --- QUANTUM ADVANTAGE CALCULATION ---
     acc_improve = ((accuracy_quantum - accuracy_classical) / max(accuracy_classical, 0.01)) * 100
     prec_improve = ((precision_quantum - precision_classical) / max(precision_classical, 0.01)) * 100
@@ -328,46 +375,6 @@ def main():
     print(f"   AUC:       {auc_improve:+.2f}%")
     print("=" * 70 + "\n")
 
-    # --- INTEGRATE LIME FOR EXPLAINABILITY ---
-    print("=" * 70)
-    print("🟢 LIME EXPLANATIONS FOR QSVM PREDICTIONS")
-    print("=" * 70)
-
-    def quantum_predict_proba(X):
-        kernel = compute_quantum_kernel_advanced(X, X_train_reduced, n_qubits)
-        return svm_quantum.predict_proba(kernel)
-
-    explainer = lime_tabular.LimeTabularExplainer(
-        X_train_reduced,
-        mode="classification",
-        feature_names=[f"PCA Feature {i+1}" for i in range(n_qubits)],
-        class_names=["Normal", "Anomaly"],
-        discretize_continuous=False
-    )
-
-    # Explain a few instances (e.g., one normal, one anomaly if available)
-    normal_indices = np.where(y_test == 0)[0]
-    anomaly_indices = np.where(y_test == 1)[0]
-
-    instances_to_explain = []
-    if len(normal_indices) > 0:
-        instances_to_explain.append((normal_indices[0], "Normal"))
-    if len(anomaly_indices) > 0:
-        instances_to_explain.append((anomaly_indices[0], "Anomaly"))
-
-    for idx, label_type in instances_to_explain:
-        print(f"\nLIME Explanation for a {label_type} Instance (Index {idx}):")
-        exp = explainer.explain_instance(
-            X_test_reduced[idx], 
-            quantum_predict_proba, 
-            num_features=n_qubits, 
-            num_samples=500  # Reduced samples to maintain efficiency
-        )
-        print(exp.as_list(label=1))
-        fig = exp.as_pyplot_figure(label=1)
-        plt.title(f'LIME Explanation for {label_type} Instance')
-        plt.show()
-
     # --- CONFUSION MATRIX WITH GRAPH ---
     cm = confusion_matrix(y_test, y_pred_quantum)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Normal', 'Anomaly'])
@@ -376,84 +383,59 @@ def main():
     plt.show()
 
     # ====================================================================
-    # ENHANCED PLOTTING SECTION
+    # LIME INTERPRETABILITY FOR QSVM
     # ====================================================================
-    
-    fig = plt.figure(figsize=(18, 12))
-    gs = fig.add_gridspec(3, 3, hspace=0.4, wspace=0.35)
+    print("=" * 70)
+    print("🧠 LIME: LOCAL INTERPRETABILITY FOR QSVM")
+    print("=" * 70)
 
-    models = ['Classical\nLinear SVM', 'Quantum\nOptimized SVM']
-    CLASSICAL_COLOR = '#3498db'
-    QUANTUM_COLOR = '#e74c3c'
-    ADVANTAGE_COLOR = '#2ecc71'
-    
-    def add_value_labels(ax, bars, fmt='{:.3f}'):
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.02,
-                    fmt.format(height), ha='center', va='bottom', 
-                    fontweight='bold', fontsize=10, color='black')
+    # Custom predictor wrapper for QSVM (computes kernel on-the-fly for perturbations)
+    def qsvm_predict_proba(X):
+        if hasattr(X, 'values'):
+            X = X.values
+        if len(X.shape) == 1:
+            X = X.reshape(1, -1)
+        K = compute_quantum_kernel_advanced(X, X_train_reduced, n_qubits)
+        return svm_quantum.predict_proba(K)
 
-    metrics_list = [
-        ('Accuracy', accuracy_classical, accuracy_quantum, gs[0, 0]),
-        ('Precision', precision_classical, precision_quantum, gs[0, 1]),
-        ('Recall', recall_classical, recall_quantum, gs[0, 2]),
-        ('F1-Score', f1_classical, f1_quantum, gs[1, 0]),
-        ('AUC Score', roc_auc_classical, roc_auc_quantum, gs[1, 1]),
-    ]
-    
-    for i, (title, c_score, q_score, subplot) in enumerate(metrics_list):
-        ax = fig.add_subplot(subplot)
-        bars = ax.bar(models, [c_score, q_score], color=[CLASSICAL_COLOR, QUANTUM_COLOR], 
-                      width=0.6, edgecolor='black', linewidth=1.5, alpha=0.9)
-        ax.set_title(title, fontsize=14, fontweight='bold', color='#2c3e50', pad=12)
-        ax.set_ylabel('Score', fontsize=11)
-        ax.set_ylim(0, 1.1)
-        ax.grid(axis='y', alpha=0.5, linestyle=':')
-        add_value_labels(ax, bars)
-    
-    ax6 = fig.add_subplot(gs[1, 2])
-    improvements = [acc_improve, prec_improve, rec_improve, f1_improve, auc_improve]
-    metrics_names = ['Acc', 'Prec', 'Rec', 'F1', 'AUC']
-    colors_imp = [ADVANTAGE_COLOR if x > 0 else '#e67e22' for x in improvements] 
-    bars6 = ax6.barh(metrics_names, improvements, color=colors_imp, 
-                     edgecolor='black', linewidth=1.5, alpha=0.9)
-    ax6.set_title('Quantum Advantage (%)', fontsize=14, fontweight='bold', color='#2c3e50', pad=12)
-    ax6.set_xlabel('Improvement (%)', fontsize=11)
-    ax6.axvline(x=0, color='black', linestyle='--', linewidth=1)
-    ax6.grid(axis='x', alpha=0.5, linestyle=':')
-    for i, (bar, val) in enumerate(zip(bars6, improvements)):
-        width = bar.get_width()
-        ax6.text(width + (1.5 if width > 0 else -1.5), bar.get_y() + bar.get_height()/2.,
-                 f'{val:+.1f}%', ha='left' if width > 0 else 'right', 
-                 va='center', fontweight='bold', fontsize=10)
+    # Create LIME explainer
+    feature_names = [f'Principal Component {i+1}' for i in range(X_train_reduced.shape[1])]
+    explainer = LimeTabularExplainer(
+        X_train_reduced,
+        feature_names=feature_names,
+        class_names=['Normal', 'Anomaly'],
+        mode='classification',
+        discretize_continuous=True
+    )
 
-    ax7 = fig.add_subplot(gs[2, :])
-    ax7.plot(fpr_classical, tpr_classical, color=CLASSICAL_COLOR, lw=3, 
-             label=f'Classical (AUC = {roc_auc_classical:.4f})', 
-             linestyle='--', alpha=0.7)
-    ax7.plot(fpr_quantum, tpr_quantum, color=QUANTUM_COLOR, lw=7,
-             label=f'Quantum (AUC = {roc_auc_quantum:.4f})', alpha=1.0, zorder=3)
-    ax7.plot([0, 1], [0, 1], color='gray', lw=2, linestyle=':', alpha=0.5)
-    ax7.fill_between(fpr_quantum, tpr_quantum, alpha=0.4, color=QUANTUM_COLOR, zorder=2)
-    ax7.fill_between(fpr_classical, tpr_classical, alpha=0.1, color=CLASSICAL_COLOR, zorder=1)
-    ax7.set_xlim([0.0, 1.0])
-    ax7.set_ylim([0.0, 1.05])
-    ax7.set_xlabel('FPR', fontsize=14, fontweight='bold') 
-    ax7.set_ylabel('TPR', fontsize=14, fontweight='bold' )
-    ax7.set_title('ROC Curve: Quantum Advantage', 
-                  fontsize=17, fontweight='bold', color='#2c3e50', pad=15)
-    ax7.legend(loc="lower right", fontsize=12, framealpha=0.95, fancybox=True, shadow=True)
-    ax7.grid(alpha=0.6, linestyle='--')
-    ax7.annotate('QSVM SUPERIORITY', xy=(0.1, 0.8), xytext=(0.3, 0.6),
-                 arrowprops=dict(facecolor=QUANTUM_COLOR, shrink=0.05, linewidth=0, alpha=0.7),
-                 fontsize=14, fontweight='extra bold', color=QUANTUM_COLOR,
-                 bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.8))
+    # Explain the first test instance (adjust index as needed)
+    instance_idx = 0
+    instance = X_test_reduced[instance_idx]
+    prediction = y_pred_quantum[instance_idx]
+    true_label = y_test[instance_idx]
 
-    plt.suptitle('Optimized Quantum-Enhanced IDS', 
-                 fontsize=20, fontweight='bold', color='#1c313a', y=0.985)
-    
+    print(f"Explaining instance {instance_idx}: True Label = {true_label}, QSVM Prediction = {prediction}")
+
+    lime_start = time.time()
+    exp = explainer.explain_instance(
+        instance,
+        qsvm_predict_proba,
+        num_features=4,  # All features since n=4
+        num_samples=500  # Reduced for efficiency; increase for more accuracy
+    )
+    lime_time = time.time() - lime_start
+    print(f"⏱️ LIME explanation time: {lime_time:.1f}s")
+
+    # Visualize the explanation
+    fig = exp.as_pyplot_figure()
+    plt.title(f'LIME Explanation for QSVM\nInstance {instance_idx}: True={true_label}, Pred={prediction}')
+    plt.tight_layout()
     plt.show()
+
+    # Print feature contributions
+    print("\nFeature Contributions (LIME):")
+    for feature, weight in exp.as_list():
+        print(f"  {feature}: {weight:.4f}")
 
 if __name__ == '__main__':
     main()
